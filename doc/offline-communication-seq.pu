@@ -1,0 +1,22 @@
+@startuml offline communication
+
+participant DEV as "Device"
+participant GW as "Com service"
+
+DEV -> GW : node/XXX/-/com/cap = {com: "off"; dev: "info-box"; acc: ["tim", "met"]}
+
+...
+
+DEV -> GW : node/XXX/-/com/poll = 2000 (timeout in ms)
+GW -> DEV : node/XXX/a/aa = …
+DEV -> GW : node/XXX/-/com/ack = "a/aa"
+GW -> DEV : node/XXX/b/bb = …
+DEV -> GW : node/XXX/-/com/ack = "b/bb"
+
+...
+
+DEV -> GW : node/XXX/-/com/get/tim = 2000 (timeout in ms)
+GW -> DEV : node/XXX/dev/time/-/set = "1684851276+0200"
+DEV -> GW : node/XXX/-/com/ack = "dev/time/-/set"
+
+@enduml
