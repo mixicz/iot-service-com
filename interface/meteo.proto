@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+message Meteo {
+    google.protobuf.Timestamp timestamp = 1;
+    repeated Sensor = 2;
+}
+
+/*
+    Based on hardwario sensor set (https://docs.hardwario.com/tower/hardware-modules/)
+*/
+message Sensor {
+    /*
+        Location can be identified only by its ID `locId` - each device then needs to 
+        maintain its location list; or location name `locName` can be provided by
+        source service. It is also possible to combine those methods, providing name
+        for new or changed services until they are provisioned to all relevant
+        devices.
+    */
+    uint32 locId = 1;
+    optional string locName = 2;
+
+    // indicates use of precise temperature sensor
+    bool precise = 3;
+
+    // temperature, °C
+    float temp = 4;
+
+    // humidity as percentage, 0-100
+    optional int32 humidity = 5;
+    optional int32 luminance = 6;
+    optional int32 pressure = 7;
+    optional float co2 = 8;
+    optional float voc = 9;
+}
+

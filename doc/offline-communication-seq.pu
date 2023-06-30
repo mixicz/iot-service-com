@@ -3,7 +3,7 @@
 participant DEV as "Device"
 participant GW as "Com service"
 
-DEV -> GW : node/XXX/-/com/cap = {com: "off"; dev: "info-box"; acc: ["tim", "met"]}
+DEV -> GW : node/XXX/-/com/cap = {onl: false; acc: ["tim", "met"]}
 
 ...
 

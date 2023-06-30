@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+message Cap {
+    bool onl = 1;
+    string dev = 2;
+    repeated string acc = 3;
+}
