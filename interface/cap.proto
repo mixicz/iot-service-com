@@ -1,7 +1,17 @@
 syntax = "proto3";
+package iot_service;
+option go_package = "github.com/mixicz/iot-service-com/com-service/cap";
 
 message Cap {
     bool onl = 1;
     string dev = 2;
-    repeated string acc = 3;
+    repeated CapData acc = 3;
+}
+
+enum CapData {
+    TIM = 0;
+    MET = 1;
+    BEL = 2;
+    PVC = 3;
+    PVD = 4;
 }

@@ -13,7 +13,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x13interface/cap.proto\x12\x0biot_service\",\n\x03\x43\x61p\x12\x0b\n\x03onl\x18\x01 \x01(\x08\x12\x0b\n\x03\x64\x65v\x18\x02 \x01(\t\x12\x0b\n\x03\x61\x63\x63\x18\x03 \x03(\tB3Z1github.com/mixicz/iot-service-com/com-service/capb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x13interface/cap.proto\x12\x0biot_service\"B\n\x03\x43\x61p\x12\x0b\n\x03onl\x18\x01 \x01(\x08\x12\x0b\n\x03\x64\x65v\x18\x02 \x01(\t\x12!\n\x03\x61\x63\x63\x18\x03 \x03(\x0e\x32\x14.iot_service.CapData*6\n\x07\x43\x61pData\x12\x07\n\x03TIM\x10\x00\x12\x07\n\x03MET\x10\x01\x12\x07\n\x03\x42\x45L\x10\x02\x12\x07\n\x03PVC\x10\x03\x12\x07\n\x03PVD\x10\x04\x42\x33Z1github.com/mixicz/iot-service-com/com-service/capb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -22,6 +22,8 @@ if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'Z1github.com/mixicz/iot-service-com/com-service/cap'
+  _globals['_CAPDATA']._serialized_start=104
+  _globals['_CAPDATA']._serialized_end=158
   _globals['_CAP']._serialized_start=36
-  _globals['_CAP']._serialized_end=80
+  _globals['_CAP']._serialized_end=102
 # @@protoc_insertion_point(module_scope)
