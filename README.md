@@ -49,8 +49,8 @@ Send current device capabilities. Those may change during runtime, for example s
 * `onl` (mandatory):
   * `false` = offline - information needs to be requested by the device (battery powered devices with disabled radio to conserve power),
   * `true` = online - device is always listening, data can be sent anytime,
-* `acc` (optional) - accepted data as string array, empty array is asumed if not present in payload (used in topic name after device ID):
-  * `tim` = real time - managed by this configuration service,
+* `acc` (optional) - accepted data as enum array (enum values are in upper case), empty array is asumed if not present in payload (used in topic name after device ID):
+  * `tim` = real time - managed by this communication service,
   * `met` = current meteorological data - this is managed by separate service and periodically published as binary protobuf payload to all devices able to use it,
   * `bel` = doorbell events (typically short TTL, for online devices only)
   * `pvc` = PhotoVoltaics Current stats,
@@ -71,7 +71,7 @@ Intended retry behavior:
 * `nack` - immediately do up to M retries and repeat for up to next N `get` commands,
 * no reply - repeat transfer after next `get` command, up to N times,
 
-**Payload**: *NULL*
+**Payload**: *string* data topic name (as used in `get` and `cap` commands, e.g. `met`, `conf`…)
 
 ## Com service to device (MQTT)
 <mark>TODO</mark>
@@ -86,9 +86,11 @@ Current timestamp (seconds from 1.1.1970 0:00) and timezone. Communication laten
 
 This is handled directly by com service. For offline devices, it is sent as response to specific request for time [`node/XXX/-/com/get/time`](#nodexxx-comget-nodexxx-comget) or as part of generic data request [`node/XXX/-/com/get`](#nodexxx-comget-nodexxx-comget) when `time` is part of capabilities.
 
-**Payload**: *string* "{timestamp}{timezone}", where *timestamp* is standard UNIX timestamp and *timezone* MUST use numerical format "{+/-}HHMM".
+For online devices, this MAY be sent periodically (e.g. every hour) without need for devices to ask for the data.
 
-**Example**: "1684851276+0200"
+**Payload**: *string* "{timestamp}{timezone}", where *timestamp* is standard UNIX timestamp and *timezone* is current timezone offset in seconds prefixed with the +/- sign.
+
+**Example**: "1684851276+7200"
 
 ### `node/XXX/{dev}/conf/-/set`
 Configuration for particular device sent by config service in protobuf format. Com service splits binary payload to small chunks, and sends it to device.
@@ -123,12 +125,13 @@ Notifies of doorbell button push event. How each device responds is in its own r
     * `iot.service.com.conf.led-pwm:terasa:0`
 * topics:
   * met
+  * bel
   * pvc
   * pvd
   * conf
 * broadcast messages,
   * TTL of message,
-* generic messages (e.g. meteo),
+* generic messages (e.g. meteo, bell),
 * raw payload vs. protobuf,
 * configuration provisioning,
 
