@@ -7,18 +7,22 @@ Configuration is provided via environment variables:
 - NATS_CREDS - path to credentials file
 - NATS_STREAM_COM - name of JetStream stream for incoming messages
 - NATS_STREAM_TOWER - name of JetStream stream for Tower communication
+- NATS_STREAM_QUEUE - name of JetStream stream for message queue
 - NATS_SUBJECT_COM - base subject for incoming messages
 - NATS_SUBJECT_TOWER - base subject for Hardwario Tower communication
+- NATS_SUBJECT_QUEUE - base subject for message queue
 */
 package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/ilyakaznacheev/cleanenv"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
@@ -32,8 +36,10 @@ type Config struct {
 		Creds        string `env:"NATS_CREDS" env-default:""`
 		StreamCom    string `env:"NATS_STREAM_COM" env-default:"iot_service_com"`
 		StreamTower  string `env:"NATS_STREAM_TOWER" env-default:"iot_service_tower"`
+		StreamQueue  string `env:"NATS_STREAM_QUEUE" env-default:"iot_service_queue"`
 		SubjectCom   string `env:"NATS_SUBJECT_COM" env-default:"iot.service.com"`
 		SubjectTower string `env:"NATS_SUBJECT_TOWER" env-default:"node"`
+		SubjectQueue string `env:"NATS_SUBJECT_QUEUE" env-default:"queue"`
 	}
 }
 
@@ -46,18 +52,24 @@ type deviceMessage struct {
 
 // Device communication state
 type deviceState struct {
-	Online   bool
-	Accept   map[cap.CapData]bool
-	Ready    bool
-	Timeout  int
-	LastSend time.Time
-	Queue    map[string]deviceMessage
+	Online       bool
+	Accept       map[cap.CapData]bool
+	Ready        bool
+	Timeout      int
+	LastSend     time.Time
+	QueueSubject string
+	// Queue        map[string]deviceMessage
 }
 
 var config Config
 var devices map[string]deviceState
 var nc *nats.Conn
 var js nats.JetStreamContext
+
+func (d deviceState) GetNextMessage() (deviceMessage, bool) {
+	// Get next message from NATS queue
+	sub, err := nc.SubscribeSync(d.QueueSubject)
+}
 
 // Send time to device
 func sendTime(deviceName string) {
@@ -194,11 +206,20 @@ func handleServiceMessage(msg *nats.Msg) {
 		if len(tokens) >= 5 {
 			deviceName = tokens[4]
 		}
-		switch topic {
-		case "conf":
-			// TODO
+		event := cloudevents.NewEvent()
+		err := json.Unmarshal(msg.Data, &event)
+		if err != nil {
+			log.Printf("Error parsing message: %v", err)
+			return
+		}
+		switch event.DataContentType() {
+		case "application/protobuf":
+			// TODO - split and base64 encode data
+			// TODO - send / enqueue data
+		case "text/plain":
+			// TODO - just send / enqueue data
 		default:
-			// TODO
+			log.Printf("ERROR: Unknown data content type: %s", event.DataContentType())
 		}
 	}
 }
