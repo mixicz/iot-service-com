@@ -1,22 +1,57 @@
 @startuml offline communication
 
-participant DEV as "Device"
+queue GW_CMD as "Com service command queue"
+queue GW_Q as "Com service private queue"
 participant GW as "Com service"
+participant DEV as "Device"
 
-DEV -> GW : node/XXX/-/com/cap = {onl: false; acc: ["tim", "met"]}
+== Device advertisement ==
 
-...
+DEV -> GW : node/XXX/-/com/cap = {onl: false; dev:"infobox", cap_data: [TIM, MET, PVC, PVD]}
 
+== Services publishing data ==
+
+[-> GW_CMD : iot.service.com.met
+GW_CMD -> GW : iot.service.com.met
+GW -> GW_Q++ : PUSH iot.service.com-private.infobox.met.1234567890
+
+[-> GW_CMD : iot.service.com.pvc
+GW_CMD -> GW : iot.service.com.pvc
+GW -> GW_Q++ : PUSH iot.service.com-private.infobox.pvc.1234567890
+
+== Device generic data request ==
+
+DEV -> DEV++ : enable radio
 DEV -> GW : node/XXX/-/com/poll = 2000 (timeout in ms)
-GW -> DEV : node/XXX/a/aa = …
-DEV -> GW : node/XXX/-/com/ack = "a/aa"
-GW -> DEV : node/XXX/b/bb = …
-DEV -> GW : node/XXX/-/com/ack = "b/bb"
+group Meteo data 
+    GW_Q -> GW-- : PULL iot.service.com-private.infobox.met.1234567890
+    GW -> GW : split message
+    loop for each message part
+        GW -> DEV : node/XXX/met/-/-/set = …
+    end
+    DEV -> GW : node/XXX/-/com/ack = "met/-/-/set"
+end
+group PVC data
+    GW_Q -> GW-- : PULL iot.service.com-private.infobox.pvc.1234567890
+    GW -> GW : split message
+    loop for each message part
+        GW -> DEV : node/XXX/pvc/-/-/set = …
+    end
+    DEV -> GW : node/XXX/-/com/ack = "pvc/-/-/set"
+end
+group current time
+    GW -> DEV : node/XXX/tim/-/-/set = "1684851276+0200"
+    DEV -> GW : node/XXX/-/com/ack = "tim/-/-/set"
+end
+GW -> DEV : node/XXX/com/-/-/fin
+DEV -> DEV-- : disable radio
 
-...
+== Device specific data request ==
 
+DEV -> DEV++ : enable radio
 DEV -> GW : node/XXX/-/com/get/tim = 2000 (timeout in ms)
-GW -> DEV : node/XXX/dev/time/-/set = "1684851276+0200"
-DEV -> GW : node/XXX/-/com/ack = "dev/time/-/set"
+GW -> DEV : node/XXX/tim/-/-/set = "1684851276+0200"
+DEV -> GW : node/XXX/-/com/ack = "tim/-/-/set"
+DEV -> DEV-- : disable radio
 
 @enduml

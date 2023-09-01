@@ -11,6 +11,7 @@ Configuration is provided via environment variables:
 - NATS_SUBJECT_COM - base subject for incoming messages
 - NATS_SUBJECT_TOWER - base subject for Hardwario Tower communication
 - NATS_SUBJECT_QUEUE - base subject for message queue
+- NATS_DURABLE_QUEUE - name of durable queue for message queue
 */
 package main
 
@@ -36,10 +37,11 @@ type Config struct {
 		Creds        string `env:"NATS_CREDS" env-default:""`
 		StreamCom    string `env:"NATS_STREAM_COM" env-default:"iot_service_com"`
 		StreamTower  string `env:"NATS_STREAM_TOWER" env-default:"iot_service_tower"`
-		StreamQueue  string `env:"NATS_STREAM_QUEUE" env-default:"iot_service_queue"`
+		StreamQueue  string `env:"NATS_STREAM_QUEUE" env-default:"iot_service_com_queue"`
 		SubjectCom   string `env:"NATS_SUBJECT_COM" env-default:"iot.service.com"`
 		SubjectTower string `env:"NATS_SUBJECT_TOWER" env-default:"node"`
-		SubjectQueue string `env:"NATS_SUBJECT_QUEUE" env-default:"queue"`
+		SubjectQueue string `env:"NATS_SUBJECT_QUEUE" env-default:"iot.service.com._queue"`
+		DurableQueue string `env:"NATS_DURABLE_QUEUE" env-default:"iot-com-service"`
 	}
 }
 
@@ -47,17 +49,20 @@ type Config struct {
 type deviceMessage struct {
 	Created time.Time
 	Ttl     int
-	Msg     []string
+	Msg     string
+	NatsMsg *nats.Msg
 }
 
 // Device communication state
 type deviceState struct {
+	Name         string
 	Online       bool
 	Accept       map[cap.CapData]bool
 	Ready        bool
 	Timeout      int
 	LastSend     time.Time
 	QueueSubject string
+	Sub          *nats.Subscription
 	// Queue        map[string]deviceMessage
 }
 
@@ -66,9 +71,44 @@ var devices map[string]deviceState
 var nc *nats.Conn
 var js nats.JetStreamContext
 
+// Fetches next available message for device from queue
+// TODO - add subject and data filtering
 func (d deviceState) GetNextMessage() (deviceMessage, bool) {
-	// Get next message from NATS queue
-	sub, err := nc.SubscribeSync(d.QueueSubject)
+	// Check whether we have prepared NATS subscription
+	if d.Sub == nil {
+		// If not, subscribe to the queue
+		var err error
+		d.Sub, err = js.SubscribeSync(d.QueueSubject, nats.Durable(config.Nats.DurableQueue+"-"+d.Name))
+		if err != nil {
+			log.Printf("Error subscribing to queue: %v", err)
+			return deviceMessage{}, false
+		}
+	}
+
+	msg, err := d.Sub.NextMsg(0 * time.Second)
+	if err == nats.ErrTimeout {
+		return deviceMessage{}, false
+	} else if err != nil {
+		log.Printf("Error getting message from queue: %v", err)
+		return deviceMessage{}, false
+	}
+
+	// Parse cloud event
+	event := cloudevents.NewEvent()
+	err = json.Unmarshal(msg.Data, &event)
+	if err != nil {
+		log.Printf("Error parsing cloud event: %v", err)
+		return deviceMessage{}, false
+	}
+
+	devMsg := deviceMessage{
+		Created: event.Time(),
+		NatsMsg: msg,
+		Ttl:     event.Context.GetExtensions()["ttl"].(int),
+		Msg:     string(event.Data()),
+	}
+
+	return devMsg, true
 }
 
 // Send time to device
@@ -117,7 +157,6 @@ func handleTowerMessage(msg *nats.Msg) {
 					Ready:    false,
 					Timeout:  0,
 					LastSend: time.Now(),
-					Queue:    make(map[string]deviceMessage),
 				}
 				for val := range cap.CapData_name {
 					dev.Accept[cap.CapData(val)] = false

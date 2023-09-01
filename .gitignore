@@ -25,3 +25,5 @@ go.work
 *.pyo
 __pycache__/
 .venv/
+
+.vscode

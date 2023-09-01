@@ -61,6 +61,8 @@ Request data, either all available data using `/get` or specific data using `/ge
 
 Each received data MUST be acknowledged by `/com/ack` or `/com/nack` message. After last data, `node/XXX/com/-/-/fin` message MUST be sent by the service to indicate no more data will be send and the device can safely turn off radio.
 
+**Note**: If device does not receive response, it should resend [capabilities](#nodexxx-comcap) for situations where com service for some reason does not know of the device.
+
 **Payload**: *int* timeout in miliseconds - how long will the device wait for reply before disabling radio. Timeout SHOULD reset after each received data packet to allow receiving large data chunks split to many messages with reasonably short timeout.
 
 ### `node/XXX/-/com/ack`, `node/XXX/-/com/nack`
@@ -81,10 +83,10 @@ Indicates there are no more data to send and device can safely turn off the radi
 
 **Payload**: *NULL*
 
-### `node/XXX/{dev}/tim/-/set`
+### `node/XXX/tim/-/-/set`
 Current timestamp (seconds from 1.1.1970 0:00) and timezone. Communication latencies does not have to be taken into account as this is only simple mechanism to keep device clock aproximately synced with real time and SHOULD NOT be used for applications requiring precise timing. Primary intention is for displaying time to user or cron-like scheduling with minute precission at maximum.
 
-This is handled directly by com service. For offline devices, it is sent as response to specific request for time [`node/XXX/-/com/get/time`](#nodexxx-comget-nodexxx-comget) or as part of generic data request [`node/XXX/-/com/get`](#nodexxx-comget-nodexxx-comget) when `time` is part of capabilities.
+This is handled directly by com service. For offline devices, it is sent as response to specific request for time [`node/XXX/-/com/get/tim`](#nodexxx-comget-nodexxx-comget) or as part of generic data request [`node/XXX/-/com/get`](#nodexxx-comget-nodexxx-comget) when `TIM` is part of capabilities.
 
 For online devices, this MAY be sent periodically (e.g. every hour) without need for devices to ask for the data.
 
@@ -92,27 +94,27 @@ For online devices, this MAY be sent periodically (e.g. every hour) without need
 
 **Example**: "1684851276+7200"
 
-### `node/XXX/{dev}/conf/-/set`
+### `node/XXX/conf/-/-/set`
 Configuration for particular device sent by config service in protobuf format. Com service splits binary payload to small chunks, and sends it to device.
 
 **Payload**: *protobuf* (see [Binary data encoding](#binary-data-encoding))
 
-### `node/XXX/{dev}/met/-/set`
+### `node/XXX/met/-/-/set`
 Current meteorological data in protobuf format, periodically broadcasted by meteo service. Com service takes last received meteo data, splits binary payload to small chunks, and sends it to device.
 
 **Payload**: *protobuf* (see [Binary data encoding](#binary-data-encoding) and `interface/meteo.proto`).
 
-### `node/XXX/{dev}/bel/-/trigger`
-Notifies of doorbell button push event. How each device responds is in its own responsibility (e.g. LED controllers may blink/flash). Generally is intended to be used with very short TTL, efectively routed to online devices only (very short opportunity window for offline devices polling)
+### `node/XXX/bel/-/-/set`
+Notifies of doorbell button push event. How each device responds is in its own responsibility (e.g. LED controllers may blink/flash). Generally is intended to be used with very short TTL, efectively routed to online devices only (very short opportunity window for offline device polling)
 
 **Payload**: *string* "{ID}", where *ID* is identifier of event source. Can be any string, though "{src_id}@{device_id}" convention is recomended.
 
 **Example**: "a@street:0"
 
-### `node/XXX/{dev}/pvc/-/set`
+### `node/XXX/pvc/-/-/set`
 <mark>TODO</mark>
 
-### `node/XXX/{dev}/pvd/-/set`
+### `node/XXX/pvd/-/-/set`
 <mark>TODO</mark>
 
 
@@ -139,3 +141,15 @@ Notifies of doorbell button push event. How each device responds is in its own r
 <mark>TODO</mark>
 
 * domain events?
+
+## Private topics
+
+### Message Queue
+
+Upon receiving message, service determine target devices and for each device it encode the message and place it into the queue. All devices uses same queue, distinguished and filtered by subject.
+Messages are placed in front as is, necesary metadata are part of the subject.
+
+* subject: `<base>.<device>.<data type>.<expire timestamp>`
+
+# TODO
+* *device database* - some persistent storage (NATS KV?) or rely on device readvertising? (MVP might use readvertising),
