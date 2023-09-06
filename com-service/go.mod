@@ -6,7 +6,7 @@ require github.com/nats-io/nats.go v1.27.1
 
 require (
 	github.com/BurntSushi/toml v1.1.0 // indirect
-	github.com/google/uuid v1.1.1 // indirect
+	github.com/google/uuid v1.3.1 // indirect
 	github.com/joho/godotenv v1.4.0 // indirect
 	github.com/json-iterator/go v1.1.10 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect

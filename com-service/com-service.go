@@ -16,7 +16,9 @@ Configuration is provided via environment variables:
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,11 +26,18 @@ import (
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/google/uuid"
 	"github.com/ilyakaznacheev/cleanenv"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/mixicz/iot-service-com/com-service/cap"
+)
+
+const (
+	// Maximum Tower message length
+	maxMsgLen       = 50
+	envelopeDataLen = 32
 )
 
 type Config struct {
@@ -42,15 +51,30 @@ type Config struct {
 		SubjectTower string `env:"NATS_SUBJECT_TOWER" env-default:"node"`
 		SubjectQueue string `env:"NATS_SUBJECT_QUEUE" env-default:"iot.service.com._queue"`
 		DurableQueue string `env:"NATS_DURABLE_QUEUE" env-default:"iot-com-service"`
+		ServiceName  string `env:"NATS_SERVICE_NAME" env-default:"iot-com-service"`
 	}
+	Event struct {
+		TypeQueue       string `env:"EVENT_TYPE_QUEUE" env-default:"iot.service.com.queue"`
+		TypeDomainEvent string `env:"EVENT_TYPE_DOMAIN_EVENT" env-default:"iot.service.com.domain_event"`
+	}
+	DefaultTtl int `env:"DEFAULT_TTL" env-default:"86400"`
+}
+
+// tower protobuf envelope
+type TowerEnvelope struct {
+	Idx  uint8
+	Id   uint8
+	Data [envelopeDataLen]byte
 }
 
 // Device communication message
 type deviceMessage struct {
-	Created time.Time
-	Ttl     int
-	Msg     string
-	NatsMsg *nats.Msg
+	Created     time.Time
+	Ttl         int
+	Topic       string
+	ContentType string
+	Msg         []byte
+	NatsMsg     *nats.Msg
 }
 
 // Device communication state
@@ -63,6 +87,7 @@ type deviceState struct {
 	LastSend     time.Time
 	QueueSubject string
 	Sub          *nats.Subscription
+	SubData      map[string]*nats.Subscription
 	// Queue        map[string]deviceMessage
 }
 
@@ -72,20 +97,37 @@ var nc *nats.Conn
 var js nats.JetStreamContext
 
 // Fetches next available message for device from queue
-// TODO - add subject and data filtering
-func (d deviceState) GetNextMessage() (deviceMessage, bool) {
-	// Check whether we have prepared NATS subscription
-	if d.Sub == nil {
-		// If not, subscribe to the queue
-		var err error
-		d.Sub, err = js.SubscribeSync(d.QueueSubject, nats.Durable(config.Nats.DurableQueue+"-"+d.Name))
-		if err != nil {
-			log.Printf("Error subscribing to queue: %v", err)
-			return deviceMessage{}, false
+// optional data parameter is used for filtering messages by data type
+func (d deviceState) GetNextMessage(data ...string) (deviceMessage, bool) {
+	// Check whether we have prepared NATS subscription for requested data
+	var sub *nats.Subscription
+	if len(data) <= 0 {
+		// Any data
+		if d.Sub == nil {
+			// If subscription is not prepared, subscribe to the queue
+			var err error
+			d.Sub, err = js.SubscribeSync(d.QueueSubject, nats.Durable(config.Nats.DurableQueue+"-"+d.Name))
+			if err != nil {
+				log.Printf("Error subscribing to queue: %v", err)
+				return deviceMessage{}, false
+			}
 		}
+		sub = d.Sub
+	} else {
+		// Specific data
+		if d.SubData[data[0]] == nil {
+			// If subscription is not prepared, subscribe to the queue
+			var err error
+			d.SubData[data[0]], err = js.SubscribeSync(d.QueueSubject+"."+data[0], nats.Durable(config.Nats.DurableQueue+"-"+d.Name+"-"+data[0]))
+			if err != nil {
+				log.Printf("Error subscribing to queue: %v", err)
+				return deviceMessage{}, false
+			}
+		}
+		sub = d.SubData[data[0]]
 	}
 
-	msg, err := d.Sub.NextMsg(0 * time.Second)
+	msg, err := sub.NextMsg(0 * time.Second)
 	if err == nats.ErrTimeout {
 		return deviceMessage{}, false
 	} else if err != nil {
@@ -102,24 +144,147 @@ func (d deviceState) GetNextMessage() (deviceMessage, bool) {
 	}
 
 	devMsg := deviceMessage{
-		Created: event.Time(),
-		NatsMsg: msg,
-		Ttl:     event.Context.GetExtensions()["ttl"].(int),
-		Msg:     string(event.Data()),
+		Created:     event.Time(),
+		Ttl:         event.Context.GetExtensions()["ttl"].(int),
+		Topic:       event.Context.GetExtensions()["topic"].(string),
+		ContentType: event.DataContentType(),
+		Msg:         event.Data(),
+		NatsMsg:     msg,
 	}
 
 	return devMsg, true
 }
 
+// Ack / Nack message in queue
+func (d deviceState) AckMessage(msg deviceMessage, ack bool) {
+	if msg.NatsMsg == nil {
+		log.Printf("Warning: trying to ACK NATS message without NATS context")
+		return
+	}
+	if ack {
+		msg.NatsMsg.Ack()
+	} else {
+		msg.NatsMsg.Nak()
+	}
+}
+
+// Add message to queue or send it immediately if device is online
+func (d deviceState) AddMessage(msg deviceMessage) {
+	// if device is online, send message immediately
+	if d.Online {
+		d.SendMessage(msg)
+		return
+	}
+	// if device is offline, add message to queue
+	// prepare cloud event envelope for queue
+	event := cloudevents.NewEvent()
+	event.SetID(uuid.NewString())
+	event.SetSource(config.Nats.ServiceName)
+	event.SetType(config.Event.TypeQueue)
+	event.SetTime(msg.Created)
+	event.SetData(msg.ContentType, msg.Msg)
+	event.Context.SetExtension("ttl", msg.Ttl)
+	event.Context.SetExtension("topic", msg.Topic)
+	bytes, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("Error marshalling cloud event to JSON: %v", err)
+		return
+	}
+	// send message to queue
+	_, err1 := js.Publish(d.QueueSubject, bytes)
+	if err1 != nil {
+		log.Printf("Error sending message to queue: %v", err)
+	}
+}
+
+// Send message to device
+func (d deviceState) SendMessage(msg deviceMessage) {
+	// split and encode the data
+	var parts [][]byte
+	switch msg.ContentType {
+	case "application/protobuf":
+		if len(msg.Msg) > 255*envelopeDataLen {
+			log.Printf("ERROR: protobuf message too long (%d > %d), cannot split protobuf messages to more than 255 parts", len(msg.Msg), 255*envelopeDataLen)
+			return
+		}
+		// split and base64 encode parts of protobuf message
+		for l := 0; l < len(msg.Msg); l += envelopeDataLen {
+			// create envelope
+			envelope := TowerEnvelope{
+				Idx: uint8(l / envelopeDataLen),
+				// use CapData value as ID as it is unique for each topic to allow detection of potential message collisions
+				Id:   uint8(cap.CapData_value[strings.ToUpper(msg.Topic)]) & 0x7F,
+				Data: [envelopeDataLen]byte{},
+			}
+			copy(envelope.Data[:], msg.Msg[l:l+envelopeDataLen])
+			// last message has MSB of ID set
+			if l+envelopeDataLen >= len(msg.Msg) {
+				envelope.Id += 0x80
+			}
+			// encode envelope
+			var buf bytes.Buffer
+			enc := gob.NewEncoder(&buf)
+			err := enc.Encode(envelope)
+			if err != nil {
+				log.Printf("Error encoding tower envelope to bytes: %v", err)
+				return
+			}
+			encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+			parts = append(parts, []byte(encoded))
+		}
+	case "text/plain":
+		if len(msg.Msg) > maxMsgLen {
+			log.Printf("ERROR: text message too long (%d > %d), cannot split plain text messages: %s", len(msg.Msg), maxMsgLen, msg.Msg)
+			return
+		}
+		parts = [][]byte{[]byte(msg.Msg)}
+	}
+
+	ok := true
+	for _, part := range parts {
+		// send messages to device
+		err := nc.Publish(config.Nats.SubjectTower+"."+d.Name+"."+msg.Topic+".-.set", part)
+		if err != nil {
+			ok = false
+			log.Printf("Error sending data: %v", err)
+		}
+	}
+	// TODO - ACK after receiving ACK from device, here should be only NACK in case of error
+	d.AckMessage(msg, ok)
+}
+
+// Initialize device state to sane values
+func (d *deviceState) Init() {
+	d.SubData = make(map[string]*nats.Subscription)
+	d.Sub = nil
+	d.Accept = make(map[cap.CapData]bool)
+	d.LastSend = time.Now()
+}
+
 // Send time to device
-func sendTime(deviceName string) {
+func (d deviceState) sendTime() {
 	timestamp := time.Now().Unix()
 	_, timezoneOffset := time.Now().Zone()
 	timeMsg := fmt.Sprintf("%d%+d", timestamp, timezoneOffset)
-	log.Printf("Sending time to %s: %s", deviceName, timeMsg)
-	err := nc.Publish(config.Nats.SubjectTower+"."+deviceName+".tim.-.set", []byte(timeMsg))
+	log.Printf("Sending time to %s: %s", d.Name, timeMsg)
+	err := nc.Publish(config.Nats.SubjectTower+"."+d.Name+".tim.-.set", []byte(timeMsg))
 	if err != nil {
-		log.Printf("Error sending time to %s: %v", deviceName, err)
+		log.Printf("Error sending time to %s: %v", d.Name, err)
+	}
+}
+
+func sendToDevices(msg deviceMessage, device string) {
+	if device == "" {
+		for _, dev := range devices {
+			if dev.Accept[cap.CapData(cap.CapData_value[strings.ToUpper(msg.Topic)])] {
+				dev.AddMessage(msg)
+			}
+		}
+	} else {
+		dev, ok := devices[device]
+		if ok && dev.Accept[cap.CapData(cap.CapData_value[strings.ToUpper(msg.Topic)])] {
+			dev.AddMessage(msg)
+		}
 	}
 }
 
@@ -146,18 +311,19 @@ func handleTowerMessage(msg *nats.Msg) {
 			capMsg := &cap.Cap{}
 			err = proto.Unmarshal(data, capMsg)
 			if err != nil {
-				log.Printf("Error parsing message: %v", err)
+				log.Printf("Error unmarshalling protobuf message: %v", err)
 				return
 			}
 			dev, ok := devices[deviceName]
 			if !ok {
 				dev = deviceState{
-					Online:   capMsg.Onl,
-					Accept:   make(map[cap.CapData]bool),
-					Ready:    false,
-					Timeout:  0,
-					LastSend: time.Now(),
+					Name:         deviceName,
+					Online:       capMsg.Onl,
+					Ready:        false,
+					Timeout:      0,
+					QueueSubject: config.Nats.SubjectQueue + "." + deviceName,
 				}
+				dev.Init()
 				for val := range cap.CapData_name {
 					dev.Accept[cap.CapData(val)] = false
 				}
@@ -183,50 +349,46 @@ func handleTowerMessage(msg *nats.Msg) {
 				switch params[0] {
 				case "tim":
 					// send time
-					sendTime(deviceName)
+					devices[deviceName].sendTime()
 				default:
 					// send requested data
 					log.Printf("Data (%s) requested by %s", params[0], deviceName)
-					conf, err := devices[deviceName].Queue[params[0]]
+					// conf, err := devices[deviceName].Queue[params[0]]
+					msg, ok := devices[deviceName].GetNextMessage(params[0])
 
 					// check if data is available and not expired
-					if !err && conf.Created.Add(time.Duration(conf.Ttl)*time.Second).After(time.Now()) {
-						log.Printf("Queued data available: %s", conf.Msg)
-						for _, m := range conf.Msg {
-							err := nc.Publish(config.Nats.SubjectTower+"."+deviceName+"."+params[0]+".-.set", []byte(m))
-							if err != nil {
-								log.Printf("Error sending data: %v", err)
-							}
+					if ok && msg.Created.Add(time.Duration(msg.Ttl)*time.Second).After(time.Now()) {
+						log.Printf("Queued data available: %s", msg.Msg)
+						devices[deviceName].SendMessage(msg)
+					} else {
+						if ok {
+							// data expired - remove from the queue by ACKing it
+							devices[deviceName].AckMessage(msg, true)
 						}
 					}
 				}
 			} else {
 				// send all queued messages
-				log.Printf("Sending queued messages to %s", deviceName)
-				for topic, msg := range devices[deviceName].Queue {
+				log.Printf("Sending all queued messages to %s", deviceName)
+				for msg, ok := devices[deviceName].GetNextMessage(); ok; msg, ok = devices[deviceName].GetNextMessage() {
 					if msg.Created.Add(time.Duration(msg.Ttl) * time.Second).After(time.Now()) {
 						// TTL is ok - send queued message
-						log.Printf("Sending queued message: %s -> %s, TTL=%d, queued time=%s", msg.Msg, topic, msg.Ttl, msg.Created.String())
-						for _, m := range msg.Msg {
-							err := nc.Publish(config.Nats.SubjectTower+"."+deviceName+"."+topic+".-.set", []byte(m))
-							if err != nil {
-								log.Printf("Error sending queued message: %v", err)
-							}
-						}
+						log.Printf("Sending queued message: %s -> %s, TTL=%d, queued time=%s", msg.Msg, msg.Topic, msg.Ttl, msg.Created.String())
+						devices[deviceName].SendMessage(msg)
 					} else {
 						// TTL expired - remove message from queue
-						log.Printf("Removing expired message from queue: %s, TTL=%d, queued time=%s", topic, msg.Ttl, msg.Created.String())
-						delete(devices[deviceName].Queue, topic)
+						log.Printf("Removing expired message from queue: %s, TTL=%d, queued time=%s", msg.Topic, msg.Ttl, msg.Created.String())
+						devices[deviceName].AckMessage(msg, true)
 					}
 				}
 				// also send time if device accepts it
 				if devices[deviceName].Accept[cap.CapData_TIM] {
-					sendTime(deviceName)
+					devices[deviceName].sendTime()
 				}
 			}
 		case "ack":
 			// message successfully received by device
-			delete(devices[deviceName].Queue, string(msg.Data))
+			// TODO - remove message from queue (ack? delete?)
 		case "nack":
 			// TODO - now we don't do anything with this, in future we should resend message up to M times
 		}
@@ -251,12 +413,26 @@ func handleServiceMessage(msg *nats.Msg) {
 			log.Printf("Error parsing message: %v", err)
 			return
 		}
+		msg := deviceMessage{
+			Created:     event.Time(),
+			Ttl:         event.Context.GetExtensions()["ttl"].(int),
+			Topic:       topic,
+			ContentType: event.DataContentType(),
+			Msg:         event.Data(),
+			NatsMsg:     nil,
+		}
 		switch event.DataContentType() {
 		case "application/protobuf":
-			// TODO - split and base64 encode data
-			// TODO - send / enqueue data
+			// send / enqueue data
+			sendToDevices(msg, deviceName)
 		case "text/plain":
-			// TODO - just send / enqueue data
+			// Check length of message
+			if len(event.Data()) > maxMsgLen {
+				log.Printf("ERROR: message too long (%d > %d), cannot split plain text messages: %s", len(event.Data()), maxMsgLen, event.Data())
+				return
+			}
+			// send / enqueue data
+			sendToDevices(msg, deviceName)
 		default:
 			log.Printf("ERROR: Unknown data content type: %s", event.DataContentType())
 		}

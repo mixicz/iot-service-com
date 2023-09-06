@@ -146,10 +146,10 @@ Notifies of doorbell button push event. How each device responds is in its own r
 
 ### Message Queue
 
-Upon receiving message, service determine target devices and for each device it encode the message and place it into the queue. All devices uses same queue, distinguished and filtered by subject.
-Messages are placed in front as is, necesary metadata are part of the subject.
+Upon receiving message, service determine target devices and for each device it place the message into the queue. All devices uses same queue, distinguished and filtered by subject. Encoding and splitting to chunks is done after getting the message from queue before sending. This ensures that all message parts are redelivered again in case of failure.
+Messages are placed in queue as cloud event, necesary metadata are part of the cloud event.
 
-* subject: `<base>.<device>.<data type>.<expire timestamp>`
+* subject: `<base>.<device>.<data type>[.<expire timestamp>]`
 
 # TODO
 * *device database* - some persistent storage (NATS KV?) or rely on device readvertising? (MVP might use readvertising),
