@@ -1,8 +1,9 @@
 syntax = "proto3";
 
 message Meteo {
-    google.protobuf.Timestamp timestamp = 1;
-    repeated Sensor = 2;
+    // google.protobuf.Timestamp timestamp = 1;
+    int64 timestamp = 1;    // seconds since epoch
+    repeated Sensor dev = 2;
 }
 
 /*
