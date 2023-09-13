@@ -1,0 +1,3 @@
+iot_pb.IotMetSensor.dev max_count:8
+iot_pb.IotMetSensor.locName max_size:32
+iot_pb.IotMetSensor.humidity int_size:IS_8

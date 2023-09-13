@@ -1,15 +1,16 @@
 syntax = "proto3";
+package iot_pb;
 
-message Meteo {
+message IotMet {
     // google.protobuf.Timestamp timestamp = 1;
     int64 timestamp = 1;    // seconds since epoch
-    repeated Sensor dev = 2;
+    repeated IotMetSensor dev = 2;
 }
 
 /*
     Based on hardwario sensor set (https://docs.hardwario.com/tower/hardware-modules/)
 */
-message Sensor {
+message IotMetSensor {
     /*
         Location can be identified only by its ID `locId` - each device then needs to 
         maintain its location list; or location name `locName` can be provided by
@@ -21,7 +22,7 @@ message Sensor {
     optional string locName = 2;
 
     // indicates use of precise temperature sensor
-    bool precise = 3;
+    bool preciseTemp = 3;
 
     // temperature, °C
     float temp = 4;
