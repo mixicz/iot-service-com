@@ -7,7 +7,8 @@ participant DEV as "Device"
 
 == Device advertisement ==
 
-DEV -> GW : node/XXX/-/com/cap = {onl: false; dev:"infobox", cap_data: [TIM, MET, PVC, PVD]}
+DEV -> GW : node/infobox/-/com/cap = {onl: false; dev:"infobox", cap_data: [TIM, MET, PVC, PVD]}
+...
 
 == Services publishing data ==
 
@@ -18,40 +19,42 @@ GW -> GW_Q++ : PUSH iot.service.com-private.infobox.met.1234567890
 [-> GW_CMD : iot.service.com.pvc
 GW_CMD -> GW : iot.service.com.pvc
 GW -> GW_Q++ : PUSH iot.service.com-private.infobox.pvc.1234567890
+...
 
 == Device generic data request ==
 
 DEV -> DEV++ : enable radio
-DEV -> GW : node/XXX/-/com/poll = 2000 (timeout in ms)
+DEV -> GW : node/infobox/-/com/poll = 2000 (timeout in ms)
 group Meteo data 
     GW_Q -> GW-- : PULL iot.service.com-private.infobox.met.1234567890
     GW -> GW : split message
     loop for each message part
-        GW -> DEV : node/XXX/met/-/-/set = …
+        GW -> DEV : node/infobox/met/-/-/set = …
     end
-    DEV -> GW : node/XXX/-/com/ack = "met/-/-/set"
+    DEV -> GW : node/infobox/-/com/ack = "met/-/-/set"
 end
 group PVC data
     GW_Q -> GW-- : PULL iot.service.com-private.infobox.pvc.1234567890
     GW -> GW : split message
     loop for each message part
-        GW -> DEV : node/XXX/pvc/-/-/set = …
+        GW -> DEV : node/infobox/pvc/-/-/set = …
     end
-    DEV -> GW : node/XXX/-/com/ack = "pvc/-/-/set"
+    DEV -> GW : node/infobox/-/com/ack = "pvc/-/-/set"
 end
 group current time
-    GW -> DEV : node/XXX/tim/-/-/set = "1684851276+0200"
-    DEV -> GW : node/XXX/-/com/ack = "tim/-/-/set"
+    GW -> DEV : node/infobox/tim/-/-/set = "1684851276+0200"
+    DEV -> GW : node/infobox/-/com/ack = "tim/-/-/set"
 end
-GW -> DEV : node/XXX/com/-/-/fin
+GW -> DEV : node/infobox/com/-/-/fin
 DEV -> DEV-- : disable radio
+...
 
 == Device specific data request ==
 
 DEV -> DEV++ : enable radio
-DEV -> GW : node/XXX/-/com/get/tim = 2000 (timeout in ms)
-GW -> DEV : node/XXX/tim/-/-/set = "1684851276+0200"
-DEV -> GW : node/XXX/-/com/ack = "tim/-/-/set"
+DEV -> GW : node/infobox/-/com/get/tim = 2000 (timeout in ms)
+GW -> DEV : node/infobox/tim/-/-/set = "1684851276+0200"
+DEV -> GW : node/infobox/-/com/ack = "tim/-/-/set"
 DEV -> DEV-- : disable radio
 
 @enduml
